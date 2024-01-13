@@ -1,0 +1,188 @@
+```{r}
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(sctransform)
+library(ggplot2)
+library(harmony)
+library(ArchR)
+library(ggsci)
+```
+
+###### Preprocessing Steps
+
+```{r}
+sample <- readRDS("../analysis_v1/trem_combined.rds")
+```
+
+```{r}
+fun <- function(x) {
+  if (x == "CP7") {"Control_Donor"} 
+  else if (x == "CP8") {"Control_Recipient"}
+  else if (x == "KP7") {"KO_Donor"}
+  else if (x == "KP8") {"KO_Recipient"}
+}
+
+# Filter for only Donor and Day 0
+sample$condition <- mapply(fun, sample$orig.ident)
+```
+
+```{r}
+sample$condition <- factor(sample$condition, levels = c("Control_Donor","KO_Donor","Control_Recipient","KO_Recipient"))
+```
+
+```{r}
+DimPlot(sample, reduction = 'umap', label = TRUE, repel = TRUE, label.size = 2.5, group.by = "SCT_snn_res.0.3", cols = paletteDiscrete(unique(sample$SCT_snn_res.0.3), set = "stallion"))
+```
+
+```{r}
+Idents(sample) <- "condition"
+recipient <- subset(sample, idents = c("Control_Recipient","KO_Recipient"))
+```
+
+```{r}
+DimPlot(recipient, reduction = 'umap', label = TRUE, repel = TRUE, label.size = 2.5, group.by = "SCT_snn_res.0.3", cols = paletteDiscrete(unique(recipient$SCT_snn_res.0.3), set = "stallion"))
+```
+
+```{r}
+Idents(recipient) <- "SCT_snn_res.0.3"
+recipient_neutrophils <- subset(recipient, idents = c("1", "4", "7"))
+```
+
+```{r}
+recipient_neutrophils <- RunUMAP(recipient_neutrophils, reduction = "pca", dims = 1:30)
+recipient_neutrophils <- FindNeighbors(recipient_neutrophils, reduction = "pca", dims = 1:30)
+recipient_neutrophils <- FindClusters(recipient_neutrophils, graph.name = "SCT_snn", algorithm = 3, resolution = c(0.1, 0.2, 0.3, 0.4, 0.5), verbose = FALSE)
+```
+
+```{r}
+DimPlot(recipient_neutrophils, reduction = 'umap', label = TRUE, repel = TRUE, label.size = 2.5, group.by = "SCT_snn_res.0.5", cols = paletteDiscrete(unique(recipient_neutrophils$SCT_snn_res.0.5), set = "stallion"), ncol=2)
+```
+
+
+```{r}
+Idents(recipient_neutrophils) <- "SCT_snn_res.0.5"
+recipient_neutrophils <- subset(recipient_neutrophils, idents = c("0", "2", "3"))
+```
+
+```{r}
+recipient_neutrophils <- RunUMAP(recipient_neutrophils, reduction = "pca", dims = 1:30)
+recipient_neutrophils <- FindNeighbors(recipient_neutrophils, reduction = "pca", dims = 1:30)
+recipient_neutrophils <- FindClusters(recipient_neutrophils, graph.name = "SCT_snn", algorithm = 3, resolution = c(0.1, 0.2, 0.3, 0.4, 0.5), verbose = FALSE)
+```
+
+```{r}
+DimPlot(recipient_neutrophils, reduction = 'umap', label = TRUE, repel = TRUE, label.size = 2.5, group.by = "SCT_snn_res.0.3", cols = paletteDiscrete(unique(recipient_neutrophils$SCT_snn_res.0.3), set = "stallion"), ncol=2)
+```
+
+
+```{r}
+Idents(recipient_neutrophils) <- "SCT_snn_res.0.3"
+DefaultAssay(recipient_neutrophils) <- 'SCT'
+rna.markers <- FindAllMarkers(recipient_neutrophils, only.pos = TRUE, min.pct = 0.1, logfc.threshold = 0.25)
+write.csv(rna.markers, file ="./SCT_snn_res.0.3.csv", quote = FALSE)
+```
+
+```{r}
+Idents(recipient_neutrophils) <- "SCT_snn_res.0.5"
+DotPlot(recipient_neutrophils, features = c("Ccr2", "Plac8", "Ace", "Ear2", "H2-Eb1", "H2-Aa"), group.by = "SCT_snn_res.0.5") + RotatedAxis()
+```
+
+# WT vs KO
+```{r}
+Idents(recipient_neutrophils) <- "condition"
+DefaultAssay(recipient_neutrophils) <- 'SCT'
+rna.markers <- FindAllMarkers(recipient_neutrophils, only.pos = TRUE, min.pct = 0.1, logfc.threshold = 0.25)
+write.csv(rna.markers, file ="./DE_WT_vs_KO_recipient_monocytes_macs.csv", quote = FALSE)
+```
+
+
+```{r}
+rna.markers %>%
+    group_by(cluster) %>%
+    top_n(n = 100, wt = avg_log2FC) -> top10
+```
+
+```{r}
+DoHeatmap(subset(recipient_neutrophils, downsample = 900), features = top10$gene, size = 3) + scale_fill_gradientn(colours=paletteContinuous("solarExtra"))
+```
+
+```{r}
+DefaultAssay(recipient_neutrophils) <- "SCT"
+expdata <- GetAssayData(recipient_neutrophils)
+Pop1 <- c("Cxcl2","Il1b","Ccrl2","Nfkbia","Nfkbid","Nfkbiz","Ccl3","Ccl4")
+pops<-list(Pop1)
+#Z-Scores
+z_scores<-NULL
+
+for (i in 1:length(pops)) {
+genes <- pops[[i]]
+zz <- which(tolower(rownames(expdata)) %in% tolower(genes))
+av <- numeric(ncol(expdata))
+
+geneExp <- as.matrix(expdata[zz, ])
+geneExp <- t(scale(t(geneExp)))
+geneExp[is.nan(geneExp)] <- 0
+z_scores <- rbind(z_scores,(av + colSums(geneExp) / length(zz)))
+}
+recipient_neutrophils@meta.data$Inflammation<-z_scores[1,]
+FeaturePlot(object=recipient_neutrophils, features = "Inflammation",pt.size=1, reduction = 'umap', ncol = 2) + scale_color_gradientn(colors=c("blue","turquoise2","yellow","red","red4"), oob=scales::squish, limits=c(0,1))
+```
+
+```{r}
+VlnPlot(recipient_neutrophils, features = "Inflammation", group.by = "condition", ncol = 3)
+```
+
+# Pathway analysis WT vs KO neutrophils
+```{r}
+library(clusterProfiler)
+library(DOSE)
+library(enrichplot)
+library(ReactomePA)
+library(ggplot2)
+```
+
+```{r}
+d <- read.csv("./DE_WT_vs_KO_recipient_monocytes_macs.csv")
+d <- filter(d, avg_log2FC > 0.25)
+d <- filter(d, p_val_adj < 0.05)
+d_new <- d[c("gene", "cluster")]
+d_new
+```
+
+```{r}
+eg <- bitr(as.character(d_new$gene), fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Mm.eg.db")
+d_new <- filter(d_new, gene %in% eg$SYMBOL)
+d_new_enterzID <- merge(d_new, eg, by.x = "gene", by.y = "SYMBOL")
+d_new_enterzID <- d_new_enterzID[c("ENTREZID", "cluster")]
+geneList <- unstack(d_new_enterzID)
+geneList
+```
+
+```{r}
+ck <- compareCluster(geneCluster = geneList, fun = enrichGO, OrgDb="org.Mm.eg.db")
+ck <- setReadable(ck, OrgDb = "org.Mm.eg.db", keyType="ENTREZID")
+head(ck) 
+```
+
+```{r}
+dotplot(ck, font.size = 8) + theme(axis.text.x=element_text(angle=90, hjust=1))
+```
+
+```{r}
+VlnPlot(recipient_neutrophils, features = "Ccl3", group.by = "condition")
+VlnPlot(recipient_neutrophils, features = "Ccl4", group.by = "condition")
+```
+
+```{r}
+saveRDS(recipient_neutrophils, "recipient_monocytes_macrophages.rds")
+```
+
+```{r}
+recipient_neutrophils <- readRDS("recipient_monocytes_macrophages.rds")
+```
+
+
+
+
+

@@ -1,0 +1,227 @@
+```{r}
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(sctransform)
+library(ggplot2)
+library(harmony)
+library(ArchR)
+library(ggsci)
+```
+
+###### Preprocessing Steps
+
+```{r}
+sample <- readRDS("trem_combined.rds")
+```
+
+```{r}
+fun <- function(x) {
+  if (x == "CP7") {"Control_Donor"} 
+  else if (x == "CP8") {"Control_Recipient"}
+  else if (x == "KP7") {"KO_Donor"}
+  else if (x == "KP8") {"KO_Recipient"}
+}
+
+sample$condition <- mapply(fun, sample$orig.ident)
+```
+
+```{r}
+fun <- function(x) {
+  if (x == "CP7") {"WT"} 
+  else if (x == "CP8") {"WT"}
+  else if (x == "KP7") {"KO"}
+  else if (x == "KP8") {"KO"}
+}
+
+sample$condition2 <- mapply(fun, sample$orig.ident)
+```
+
+```{r}
+sample$condition <- factor(sample$condition, levels = c("Control_Donor","KO_Donor","Control_Recipient","KO_Recipient"))
+sample$condition2 <- factor(sample$condition2, levels = c("WT","KO"))
+```
+
+```{r}
+DimPlot(sample, reduction = 'umap', label = FALSE, repel = TRUE, label.size = 2.5, group.by = "celltype", cols = paletteDiscrete(unique(sample$celltype), set = "stallion"))
+```
+
+```{r}
+ggplot(sample@meta.data, aes(x=condition, fill=celltype)) + geom_bar(position = "fill") + theme_linedraw() + theme(axis.text.x = element_text(angle = 90)) +  scale_fill_manual(values=as.vector(paletteDiscrete(unique(sample$celltype), set = "stallion"))) + theme(axis.line = element_line(colour = "black"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank()) 
+```
+
+# DGE
+```{r}
+Idents(sample) <- "SCT_snn_res.0.2"
+DefaultAssay(sample) <- 'SCT'
+rna.markers <- FindAllMarkers(sample, only.pos = TRUE, min.pct = 0.1, logfc.threshold = 0.25)
+write.csv(rna.markers, file ="./DE_SCT_snn_res.0.2.csv", quote = FALSE)
+```
+
+# Donor/Recipient
+```{r}
+Idents(sample) <- "condition"
+donor <- subset(sample, idents = c("Control_Donor", "KO_Donor"))
+recipient <- subset(sample, idents = c("Control_Recipient", "KO_Recipient"))
+```
+
+```{r}
+Idents(donor) <- "condition"
+DefaultAssay(donor) <- 'SCT'
+rna.markers <- FindAllMarkers(donor, only.pos = TRUE, min.pct = 0.1, logfc.threshold = 0.25)
+write.csv(rna.markers, file ="./DE_donor.csv", quote = FALSE)
+```
+
+```{r}
+Idents(recipient) <- "condition"
+DefaultAssay(recipient) <- 'SCT'
+rna.markers <- FindAllMarkers(recipient, only.pos = TRUE, min.pct = 0.1, logfc.threshold = 0.25)
+write.csv(rna.markers, file ="./DE_recipient.csv", quote = FALSE)
+```
+
+# Pathway analysis across clusters
+```{r}
+library(clusterProfiler)
+library(DOSE)
+library(enrichplot)
+library(ReactomePA)
+library(ggplot2)
+```
+
+```{r}
+d <- read.csv("./DE_donor.csv")
+d <- filter(d, avg_log2FC > 0.58)
+d <- filter(d, p_val_adj < 0.05)
+d_new <- d[c("gene", "cluster")]
+d_new
+```
+
+```{r}
+eg <- bitr(as.character(d_new$gene), fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Mm.eg.db")
+d_new <- filter(d_new, gene %in% eg$SYMBOL)
+d_new_enterzID <- merge(d_new, eg, by.x = "gene", by.y = "SYMBOL")
+d_new_enterzID <- d_new_enterzID[c("ENTREZID", "cluster")]
+geneList <- unstack(d_new_enterzID)
+geneList
+```
+
+```{r}
+ck <- compareCluster(geneCluster = geneList, fun = enrichGO, OrgDb="org.Mm.eg.db")
+ck <- setReadable(ck, OrgDb = "org.Mm.eg.db", keyType="ENTREZID")
+head(ck) 
+```
+
+```{r}
+dotplot(ck, font.size = 8) + theme(axis.text.x=element_text(angle=90, hjust=1))
+```
+
+```{r}
+DefaultAssay(sample) <- "SCT"
+VlnPlot(sample, features = "Hmox1", group.by = "condition")
+```
+
+
+```{r}
+celltype <- unique(sample$celltype)
+for (cell in celltype) {
+  Idents(sample) <- "celltype"
+  curr_subset <- subset(sample, idents = cell)
+  
+  Idents(curr_subset) <- "condition2"
+  DefaultAssay(curr_subset) <- 'SCT'
+  rna.markers <- FindAllMarkers(curr_subset, only.pos = TRUE, min.pct = 0.1, logfc.threshold = 0.01)
+  write.csv(rna.markers, file =paste0("./DE_lists/DE_WTvsKO_", cell, ".csv"), quote = FALSE)
+}
+```
+
+
+
+```{r}
+library(Seurat)
+library(ggplot2)
+library(patchwork)
+library(ggpubr)
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(sctransform)
+library(ggplot2)
+library(pheatmap)
+library(Seurat)
+library(ggplot2)
+library(Matrix)
+library(RColorBrewer)
+library(dplyr)
+library(scales)
+library(data.table)
+library(stats)
+library("Nebulosa")
+library(tidyverse)
+library(hrbrthemes)
+library(viridis)
+library(magrittr)
+library(dplyr)
+```
+
+```{r}
+Macrophage <- read_delim("./DE_lists/DE_WTvsKO_Macrophages.csv", ",", escape_double = FALSE, trim_ws = TRUE)
+Macrophage$cell <- "Macrophage"
+Macrophage$sigpvalue <- ifelse(Macrophage$p_val_adj < 0.05, "p < 0.05","p > 0.05")
+Macrophage$sig <- ifelse(Macrophage$p_val_adj < 0.05 & Macrophage$avg_log2FC > 0.25, "Significant","Not Significant")
+
+Monocyte <- read_delim("./DE_lists/DE_WTvsKO_Monocytes.csv", ",", escape_double = FALSE, trim_ws = TRUE)
+Monocyte$cell <- "Monocyte"
+Monocyte$sigpvalue <- ifelse(Monocyte$p_val_adj < 0.05, "p < 0.05","p > 0.05")
+Monocyte$sig <- ifelse(Monocyte$p_val_adj < 0.05 & Monocyte$avg_log2FC > 0.25, "Significant","Not Significant")
+
+Neutrophil <- read_delim("./DE_lists/DE_WTvsKO_Neutrophils.csv", ",", escape_double = FALSE, trim_ws = TRUE)
+Neutrophil$cell <- "Neutrophil"
+Neutrophil$sigpvalue <- ifelse(Neutrophil$p_val_adj < 0.05, "p < 0.05","p > 0.05")
+Neutrophil$sig <- ifelse(Neutrophil$p_val_adj < 0.05 & Neutrophil$avg_log2FC > 0.25, "Significant","Not Significant")
+```
+
+```{r}
+#create data frame
+data <- data.frame(rbind(Neutrophil, Monocyte, Macrophage))
+data$cell <- factor(data$cell, levels = c("Neutrophil", "Monocyte", "Macrophage"))
+data$avg_log2FC <- ifelse(data$cluster == "WT", data$avg_log2FC, -1 * data$avg_log2FC)
+table(data$cell, data$sig)
+```
+
+
+```{r}
+df_Count <- data %>% group_by(sig, cell) %>% dplyr::count()
+df_Count <- data.frame(df_Count)
+
+x <- df_Count[with(df_Count,order(n,decreasing = T)) ,][df_Count[with(df_Count,order(n, decreasing = T)) ,]$sig=="Significant",]$cell
+df_Count$cell <- factor(df_Count$cell, levels = x)
+
+data$cell <- factor(data$cell, levels = x)
+data %>%
+  ggplot(aes(x=cell, y=avg_log2FC, fill=cell, color=sig)) +
+  geom_jitter(size=1, alpha=0.5, position=position_jitter(0.2)) + 
+  theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + theme(panel.border = element_blank(), panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"), legend.position="none") + scale_y_continuous(limits = c(-1, 1)) +
+  ggtitle("Pseudobulk DE WT_vs_KO") +
+  xlab("Cell types") +
+  scale_shape_manual(values=c(1,1))+
+  scale_color_manual(values=c("grey", "red"))
+```
+
+```{r}
+data$cluster <- ifelse(data$log2FoldChange > 0, "WT", "KO")
+```
+
+```{r}
+df_Count <- data %>% group_by(sig, cell) %>% dplyr::count(cluster)
+df_Count <- data.frame(df_Count)
+
+df_Count$cell <- factor(df_Count$cell)
+df_Count <- filter(df_Count, df_Count$sig == "Significant")
+ggplot(df_Count, aes(x = cell, y = n, fill = cluster)) + geom_col() + labs(x="Cell Type", y="#Genes", fill="Significance") + scale_fill_manual(values = c("dodgerblue4", "red3")) + theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))
+```
+
+
